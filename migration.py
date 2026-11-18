@@ -36,9 +36,9 @@ def parse_time(value: str) -> datetime:
     try:
         result = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise ValueError(f"Неверное время: {value!r}; нужен ISO 8601 с часовым поясом") from exc
+        raise ValueError(f"Invalid timestamp: {value!r}; use ISO 8601 with a time zone") from exc
     if result.tzinfo is None:
-        raise ValueError("Укажите часовой пояс, например +03:00 или Z")
+        raise ValueError("Include a time zone, such as +03:00 or Z")
     return result.astimezone(UTC)
 
 
@@ -75,9 +75,9 @@ class Settings:
 
 def convert_event(raw: dict, source_name: str) -> dict:
     if not raw.get("event_type") or not raw.get("event_time"):
-        raise ValueError("В событии нет event_type или event_time")
+        raise ValueError("Event is missing event_type or event_time")
     if not raw.get("user_id") and not raw.get("device_id"):
-        raise ValueError("В событии нет user_id и device_id")
+        raise ValueError("Event is missing both user_id and device_id")
     event_time = parse_export_time(raw["event_time"])
     original_id = raw.get("$insert_id") or raw.get("uuid")
     if not original_id:
@@ -116,7 +116,7 @@ def events_from_archive(data: bytes | Path, start: datetime, end: datetime, sour
                             if start <= event_time < end:
                                 yield convert_event(raw, source_name)
                         except (KeyError, ValueError, TypeError) as exc:
-                            raise ValueError(f"Некорректное событие в {name}, строка {line_number}: {exc}") from exc
+                            raise ValueError(f"Invalid event in {name}, line {line_number}: {exc}") from exc
 
 
 class Client:
@@ -142,16 +142,16 @@ class Client:
                     detail = exc.read(500).decode("utf-8", "replace")
                     for secret in (self.settings.source_key, self.settings.source_secret,
                                    self.settings.destination_key):
-                        detail = detail.replace(secret, "[скрыто]")
+                        detail = detail.replace(secret, "[redacted]")
                     raise RuntimeError(f"Amplitude HTTP {exc.code}: {detail}") from exc
                 delay = min(2 ** attempt * 5, 60)
-                LOG.warning("HTTP %s; повтор через %s с", exc.code, delay)
+                LOG.warning("HTTP %s; retrying in %s seconds", exc.code, delay)
                 time.sleep(delay)
             except (urllib.error.URLError, TimeoutError) as exc:
                 if attempt == 5:
-                    raise RuntimeError("Ошибка сети после 6 попыток") from exc
+                    raise RuntimeError("Network error after 6 attempts") from exc
                 delay = min(2 ** attempt * 5, 60)
-                LOG.warning("Ошибка сети; повтор через %s с", delay)
+                LOG.warning("Network error; retrying in %s seconds", delay)
                 time.sleep(delay)
         raise AssertionError("unreachable")
 
@@ -181,13 +181,13 @@ class Client:
         payload = json.dumps({"api_key": self.settings.destination_key, "events": events,
                               "options": {"min_id_length": 1}}, separators=(",", ":")).encode()
         if len(payload) > 19_000_000:
-            raise ValueError("Пакет больше 19 МБ; уменьшите --batch-size")
+            raise ValueError("Batch exceeds 19 MB; reduce --batch-size")
         request = urllib.request.Request(self.batch_url, data=payload,
                                          headers={"Content-Type": "application/json"}, method="POST")
         response = json.loads(self._request(request))
         if response.get("code") != 200 or response.get("events_ingested") != len(events):
-            raise RuntimeError(f"Неполное подтверждение загрузки: {response.get('code')}, "
-                               f"принято {response.get('events_ingested')} из {len(events)}")
+            raise RuntimeError(f"Incomplete upload confirmation: code {response.get('code')}, "
+                               f"accepted {response.get('events_ingested')} of {len(events)} events")
 
 
 def checkpoint_identity(settings: Settings) -> str:
@@ -208,25 +208,25 @@ def save_checkpoint(path: Path, identity: str, completed: list[str], uploaded: i
 
 def run(settings: Settings) -> int:
     if settings.start >= settings.end or settings.export_start >= settings.export_end:
-        raise ValueError("Начало периода должно быть раньше конца")
+        raise ValueError("The period start must be before its end")
     if not 1 <= settings.batch_size <= 2000:
-        raise ValueError("--batch-size должен быть от 1 до 2000")
+        raise ValueError("--batch-size must be between 1 and 2000")
     if not 1 <= settings.window_hours <= 24:
-        raise ValueError("--window-hours должен быть от 1 до 24")
+        raise ValueError("--window-hours must be between 1 and 24")
     if settings.source_key == settings.destination_key:
-        raise ValueError("Ключи исходного и целевого проектов совпадают")
+        raise ValueError("Source and destination project API keys are identical")
     identity = checkpoint_identity(settings)
     if settings.checkpoint.exists():
         state = json.loads(settings.checkpoint.read_text(encoding="utf-8"))
         if state.get("identity") != identity:
-            raise ValueError("Файл прогресса относится к другому запуску")
+            raise ValueError("Checkpoint belongs to a different migration")
     else:
         state = {"completed_hours": [], "uploaded_events": 0}
     completed = state["completed_hours"]
     uploaded = state["uploaded_events"]
     client = Client(settings)
     total_hours = int((settings.export_end - settings.export_start) / HOUR)
-    LOG.info("Период событий: %s — %s; окно выгрузки: %s — %s (%s часов)",
+    LOG.info("Event period: %s to %s; export window: %s to %s (%s hours)",
              settings.start.isoformat(), settings.end.isoformat(),
              settings.export_start.isoformat(), settings.export_end.isoformat(), total_hours)
     hour = settings.export_start
@@ -236,17 +236,17 @@ def run(settings: Settings) -> int:
             hour += HOUR
             continue
         window_end = min(hour + settings.window_hours * HOUR, settings.export_end)
-        LOG.info("Выгрузка %s — %s", stamp, window_end.isoformat())
+        LOG.info("Exporting %s to %s", stamp, window_end.isoformat())
         archive = (client.export_hour(hour) if settings.window_hours == 1
                    else client.export_range(hour, window_end))
         count = 0
         try:
             if archive:
                 # Validate the full archive before the first write to the target project.
-                LOG.info("Проверка и преобразование блока %s", stamp)
+                LOG.info("Validating and converting window %s", stamp)
                 selected = sum(1 for _ in events_from_archive(archive, settings.start,
                                                               settings.end, settings.source_name))
-                LOG.info("Найдено %s событий; загрузка", selected)
+                LOG.info("Found %s events; uploading", selected)
                 batch = []
                 for event in events_from_archive(archive, settings.start, settings.end,
                                                  settings.source_name):
@@ -254,7 +254,7 @@ def run(settings: Settings) -> int:
                     if len(batch) >= settings.batch_size:
                         client.upload(batch)
                         count += len(batch)
-                        LOG.info("Загружено за текущий блок: %s из %s", count, selected)
+                        LOG.info("Uploaded in current window: %s of %s", count, selected)
                         batch = []
                 if batch:
                     client.upload(batch)
@@ -268,25 +268,25 @@ def run(settings: Settings) -> int:
             completed.append(next_hour.isoformat())
             next_hour += HOUR
         save_checkpoint(settings.checkpoint, identity, completed, uploaded)
-        LOG.info("Блок завершён: %s событий; всего %s", count, uploaded)
+        LOG.info("Window complete: %s events; %s total", count, uploaded)
         hour = window_end
-    LOG.info("Миграция завершена: %s отправленных событий", uploaded)
+    LOG.info("Migration complete: %s events submitted", uploaded)
     return uploaded
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--from", dest="start", required=True,
-                        help="Начало периода событий, ISO 8601 с часовым поясом")
+                        help="Event period start, ISO 8601 with a time zone")
     parser.add_argument("--to", dest="end", required=True,
-                        help="Конец периода событий (не включительно)")
-    parser.add_argument("--source-name", required=True, help="Уникальное имя источника: web, mobile")
+                        help="Event period end (exclusive)")
+    parser.add_argument("--source-name", required=True, help="Unique source name, such as web or mobile")
     parser.add_argument("--region", choices=ENDPOINTS, default="us")
     parser.add_argument("--late-arrival-hours", type=int, default=48,
-                        help="Сколько часов после конца периода сканировать поступления (по умолчанию 48)")
+                        help="Extra hours to scan for late uploads (default: 48)")
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument("--window-hours", type=int, default=24,
-                        help="Часов на один запрос выгрузки (по умолчанию 24)")
+                        help="Hours per export request (default: 24)")
     parser.add_argument("--checkpoint", type=Path)
     parser.add_argument("--source-api-key")
     parser.add_argument("--source-secret-key")
@@ -297,23 +297,23 @@ def main(argv=None) -> int:
     try:
         start, end = parse_time(args.start), parse_time(args.end)
         if start >= end:
-            raise ValueError("--from должен быть раньше --to")
+            raise ValueError("--from must be earlier than --to")
         if args.late_arrival_hours < 0:
-            raise ValueError("--late-arrival-hours не может быть отрицательным")
+            raise ValueError("--late-arrival-hours cannot be negative")
         export_start = floor_hour(start)
         export_end = ceil_hour(end + timedelta(hours=args.late_arrival_hours))
         latest_available = floor_hour(datetime.now(UTC) - timedelta(hours=2))
         if export_end > latest_available:
-            raise ValueError("Окно выгрузки ещё не доступно целиком: уменьшите период/запас "
-                             "или дождитесь данных (Export API задерживается до 2 часов)")
+            raise ValueError("The full export window is not available yet: shorten the period or "
+                             "late-arrival allowance, or wait for data (Export API has a delay of up to 2 hours)")
         source_key = args.source_api_key or os.getenv("AMPLITUDE_SOURCE_API_KEY") or getpass("Source API key: ")
         source_secret = args.source_secret_key or os.getenv("AMPLITUDE_SOURCE_SECRET_KEY") or getpass("Source secret key: ")
         destination_key = (args.destination_api_key or os.getenv("AMPLITUDE_DESTINATION_API_KEY")
                            or getpass("Destination API key: "))
         if not all((source_key, source_secret, destination_key)):
-            raise ValueError("Все три ключа обязательны")
+            raise ValueError("All three keys are required")
         if source_key == destination_key:
-            raise ValueError("Исходный и целевой API key совпадают")
+            raise ValueError("Source and destination API keys are identical")
         fingerprint = hashlib.sha256(f"{source_key}:{destination_key}:{args.source_name}:{start}:{end}".encode()).hexdigest()[:12]
         checkpoint = args.checkpoint or Path(__file__).parent / ".migration-state" / f"{fingerprint}.json"
         settings = Settings(source_key, source_secret, destination_key, args.source_name,
@@ -322,7 +322,7 @@ def main(argv=None) -> int:
         run(settings)
         return 0
     except (ValueError, RuntimeError, OSError, zipfile.BadZipFile) as exc:
-        LOG.error("Миграция остановлена: %s", exc)
+        LOG.error("Migration stopped: %s", exc)
         return 1
 
 
