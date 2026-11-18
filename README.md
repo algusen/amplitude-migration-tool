@@ -1,30 +1,30 @@
 # Amplitude Migration Tool
 
-CLI-утилита для переноса исторических событий между проектами Amplitude за выбранный период. Она выгружает события через [Export API](https://amplitude.com/docs/apis/analytics/export), отбирает их по времени события и отправляет в целевой проект через [Batch Event Upload API](https://amplitude.com/docs/apis/analytics/batch-event-upload). Исходный проект не изменяется.
+A command-line tool for migrating historical events from one Amplitude project to another over a specified period. It downloads events through the [Export API](https://amplitude.com/docs/apis/analytics/export), selects them by event time, and sends them to the destination project through the [Batch Event Upload API](https://amplitude.com/docs/apis/analytics/batch-event-upload). The source project is not modified.
 
-Утилита подходит, например, для объединения событий веб-клиента и мобильного приложения в одном проекте. Каждый исходный проект обрабатывается отдельным запуском. Это перенос событий, а не копирование всех настроек проекта.
+One use case is consolidating web and mobile events in a single Amplitude project. Run the tool once for each source project. It migrates events, not the complete project configuration.
 
-## Требования
+## Requirements
 
-- Python 3.10 или новее; сторонние пакеты не нужны.
-- API key и Secret key исходного проекта; API key целевого проекта. Ключи проектов должны различаться.
-- Одинаковый регион хранения данных у обоих проектов: `us` или `eu`.
-- Место на диске для временного ZIP-архива выгрузки. После обработки блока архив удаляется.
+- Python 3.10 or newer. No third-party packages are required.
+- The source project's API key and secret key, plus the destination project's API key. The projects must have different API keys.
+- Both projects must use the same data residency region: `us` or `eu`.
+- Enough free disk space for a temporary ZIP export. The tool deletes each archive after processing it.
 
-## Подготовка
+## Before you start
 
-1. Склонируйте репозиторий и перейдите в его каталог:
+1. Clone the repository and enter its directory:
 
    ```bash
    git clone https://github.com/algusen/amplitude-migration-tool.git
    cd amplitude-migration-tool
    ```
 
-2. Получите ключи и уточните регион хранения данных в настройках проектов Amplitude.
-3. Для первого запуска создайте отдельный тестовый проект назначения и выберите небольшой период, например один день. Историческую загрузку нельзя отменить одной командой.
-4. Выберите постоянное имя для каждого источника, например `web` и `mobile`. Имя входит в `insert_id` и должно оставаться тем же при повторном запуске.
+2. Find the keys and data residency region in your Amplitude project settings.
+3. For a first run, create a separate test destination project and choose a small period, such as one day. Historical ingestion cannot be undone with a single command.
+4. Choose a stable name for each source, such as `web` and `mobile`. The name becomes part of each event's `insert_id` and must stay the same when you resume a migration.
 
-## Запуск
+## Run a migration
 
 ```bash
 python3 migration.py \
@@ -34,78 +34,78 @@ python3 migration.py \
   --region us
 ```
 
-Укажите даты своего периода. Обе границы должны содержать часовой пояс (`Z` или смещение вида `+03:00`). `--from` включается, `--to` не включается. Период определяется по `event_time`, независимо от времени поступления события на сервер Amplitude.
+Replace the example dates with your period. Both timestamps must include a time zone (`Z` or an offset such as `+03:00`). `--from` is inclusive; `--to` is exclusive. The tool selects events by `event_time`, regardless of when Amplitude received them.
 
-Команда запросит три ключа в терминале без отображения ввода. Для автоматического запуска можно использовать переменные окружения:
+The command prompts for all three keys without displaying your input. For unattended runs, you can set environment variables instead:
 
 ```bash
-export AMPLITUDE_SOURCE_API_KEY='ключ исходного проекта'
-export AMPLITUDE_SOURCE_SECRET_KEY='секрет исходного проекта'
-export AMPLITUDE_DESTINATION_API_KEY='ключ целевого проекта'
+export AMPLITUDE_SOURCE_API_KEY='source project API key'
+export AMPLITUDE_SOURCE_SECRET_KEY='source project secret key'
+export AMPLITUDE_DESTINATION_API_KEY='destination project API key'
 python3 migration.py --from '2026-10-01T00:00:00Z' --to '2026-10-02T00:00:00Z' --source-name web --region us
 ```
 
-Ключи также принимаются через параметры `--source-api-key`, `--source-secret-key` и `--destination-api-key`, но их ввод в командной строке может оставить секреты в истории shell и списке процессов. Не добавляйте ключи в README, скрипты, коммиты и логи.
+The CLI also accepts `--source-api-key`, `--source-secret-key`, and `--destination-api-key`. Passing keys on the command line can expose them in shell history and process listings. Do not put real keys in the README, scripts, commits, or logs.
 
-Для второго исходного проекта повторите команду с его ключами и другим `--source-name`, например `mobile`. Ключ назначения остаётся ключом общего целевого проекта.
+To migrate another source project, run the command again with that project's keys and a different `--source-name`, such as `mobile`. Use the same destination project key.
 
-## Параметры
+## Options
 
-| Параметр | Значение |
+| Option | Description |
 | --- | --- |
-| `--from`, `--to` | Обязательные границы периода в ISO 8601 с часовым поясом. |
-| `--source-name` | Обязательное постоянное имя исходного проекта; используется в `insert_id`. |
-| `--region` | Регион обоих проектов: `us` (по умолчанию) или `eu`. |
-| `--late-arrival-hours` | Дополнительные часы поиска поздно поступивших событий; по умолчанию `48`. |
-| `--window-hours` | Число часов на один запрос Export API: от `1` до `24`, по умолчанию `24`. |
-| `--batch-size` | Число событий на один запрос Batch API: от `1` до `2000`, по умолчанию `100`. |
-| `--checkpoint` | Путь к файлу прогресса; по умолчанию создаётся в `.migration-state/`. |
+| `--from`, `--to` | Required period boundaries in ISO 8601 format with a time zone. |
+| `--source-name` | Required stable source name, used in `insert_id`. |
+| `--region` | Region of both projects: `us` (default) or `eu`. |
+| `--late-arrival-hours` | Extra hours to scan for events uploaded late; default: `48`. |
+| `--window-hours` | Hours per Export API request: `1`–`24`; default: `24`. |
+| `--batch-size` | Events per Batch API request: `1`–`2000`; default: `100`. |
+| `--checkpoint` | Path to a progress file; by default, one is created in `.migration-state/`. |
 
-Полный список: `python3 migration.py --help`.
+Run `python3 migration.py --help` for the complete CLI reference.
 
-## Границы периода и полнота данных
+## Period boundaries and data completeness
 
-Export API выбирает архивы по `server_upload_time`, а не по `event_time`. Утилита сканирует часы от начала периода до его конца плюс `--late-arrival-hours`, затем оставляет только события с `event_time` в указанном интервале. Запас в 48 часов — настройка утилиты, а не гарантия Amplitude: событие, поступившее позже, не будет найдено. Выберите достаточный запас до первого запуска.
+The Export API selects archives by `server_upload_time`, while this tool selects events by `event_time`. To find late uploads, the tool scans from the start of the requested period through its end plus `--late-arrival-hours`, then keeps only events whose `event_time` falls within the requested period. The default 48-hour allowance is a tool setting, not an Amplitude guarantee. Events uploaded after that window will be missed. Choose an appropriate allowance before the first run.
 
-Экспорт доступен с задержкой около двух часов после поступления данных. Утилита проверяет, что рассчитанное окно выгрузки уже доступно, и останавливается до загрузки, если это не так. Для полного дня с запасом 48 часов запускайте миграцию после истечения запаса и задержки экспорта. События, пришедшие в исходный проект после завершения миграции, автоматически не добавятся.
+Export data becomes available about two hours after Amplitude receives it. The tool checks that the entire calculated export window is available and stops before uploading anything if it is too recent. For a complete day with a 48-hour late-arrival allowance, wait for that allowance and the export delay before running the migration. Events uploaded to the source after the migration finishes are not added automatically.
 
-## Повторный запуск и контроль прогресса
+## Resume and checkpoints
 
-После каждого успешно обработанного блока утилита записывает завершённые часы и число отправленных событий в `.migration-state/`. Ключей и самих событий там нет. Повторите ту же команду с теми же проектами, именем источника, периодом, регионом и запасом опоздавших событий: завершённые часы будут пропущены. Файлы прогресса исключены из Git.
+After each successfully processed window, the tool records completed hours and the number of submitted events in `.migration-state/`. The checkpoint contains neither keys nor event payloads. Rerun the same command with the same projects, source name, period, region, and late-arrival allowance to skip completed hours. Checkpoint files are excluded from Git.
 
-Если запуск прервался во время отправки блока, его часть может уже находиться в целевом проекте. Утилита использует устойчивый `insert_id`; Amplitude подавляет повторную отправку с тем же `insert_id` в течение семи дней. Повторяйте прерванный запуск в пределах этого срока. После семи дней сначала проверьте данные в целевом проекте: повторная отправка может создать дубли.
+If a run stops while uploading a window, some of its events may already be in the destination. The tool generates stable `insert_id` values, and Amplitude deduplicates repeated IDs within seven days. Resume an interrupted run within that period. After seven days, inspect the destination first: resending events may create duplicates.
 
-Если один запрос выгрузки превышает лимит размера, повторите команду с `--window-hours 1`. Уже завершённые часы сохранятся. Если даже один час превышает лимит Export API в 6 ГБ, понадобится другой способ выгрузки, например S3 Export.
+If an export request exceeds the size limit, rerun with `--window-hours 1`. Completed hours remain in the checkpoint. If a single hour exceeds the Export API's 6 GB limit, use another export method, such as S3 Export.
 
-## Проверка результата
+## Verify the result
 
-1. Убедитесь, что команда завершилась с кодом `0` и сообщением «Миграция завершена».
-2. Сверьте число событий за тот же период и типы событий в исходном и целевом проектах. Проверьте несколько известных `user_id` или `device_id` в User Lookup.
-3. Проверьте `platform`, свойства событий и шаги ключевых воронок. При одинаковых именах событий из разных источников проверьте ожидаемые фильтры и идентификацию пользователей.
+1. Confirm that the command exits with status `0` and reports completion.
+2. Compare event counts and event types for the same period in the source and destination projects. Look up several known `user_id` or `device_id` values in User Lookup.
+3. Check `platform`, event properties, and key funnel steps. If sources share event names, verify the expected filters and user identity behavior.
 
-`events_ingested` подтверждает приём пакета API, но само по себе не доказывает совпадение отчётов и числа уникальных событий.
+An `events_ingested` response confirms that the API accepted a batch. It does not by itself prove that reports or unique-event counts match.
 
-## Что переносится и ограничения
+## Migrated data and limitations
 
-Утилита передаёт тип и время события, `user_id`, `device_id`, `platform`, свойства события и пользователя, идентификатор сессии и ряд стандартных полей, если они есть в исходной записи. Исходный `amplitude_id` не переносится: целевой проект формирует собственную идентичность. Синхронизация свойств пользователя в профиль отключена (`$skip_user_properties_sync`), поэтому свойства в исторических событиях не перезаписывают текущий профиль.
+When present, the tool sends the event name and time, `user_id`, `device_id`, `platform`, event and user properties, session ID, and selected standard fields. It does not carry over the source `amplitude_id`; the destination project assigns its own identity. User property synchronization is disabled (`$skip_user_properties_sync`), so historical event properties do not overwrite the current user profile.
 
-Tracking plan, графики, дашборды, когорты, преобразования, права доступа и Session Replay утилитой не переносятся. Правила объединения пользователей и настройки целевого проекта проверьте отдельно. Перенос между регионами `us` и `eu` не поддерживается.
+Tracking plans, charts, dashboards, cohorts, transformations, permissions, and Session Replay are outside this tool's scope. Review user identity rules and destination project settings separately. Migration across `us` and `eu` regions is not supported.
 
-## Ошибки и диагностика
+## Troubleshooting
 
-| Симптом | Что проверить |
+| Symptom | Check |
 | --- | --- |
-| `401` или `403` | Ключи, права доступа и регион исходного проекта. |
-| `400` при экспорте | Размер архива; попробуйте `--window-hours 1`. |
-| `429` или `5xx` | Утилита повторяет запросы с паузами; если лимит исчерпан надолго, повторите запуск позже. |
-| `CERTIFICATE_VERIFY_FAILED` на macOS | Системный Python может не находить корневые сертификаты. Попробуйте `SSL_CERT_FILE=/etc/ssl/cert.pem python3 migration.py ...`. Не отключайте проверку TLS. |
-| «Файл прогресса относится к другому запуску» | Указан checkpoint от другого набора проектов, периода или параметров. Используйте подходящий файл либо новый путь `--checkpoint`. |
+| `401` or `403` | Source credentials, access, and project region. |
+| `400` during export | Archive size; try `--window-hours 1`. |
+| `429` or `5xx` | The tool retries with delays. If a longer rate limit is exhausted, rerun later. |
+| `CERTIFICATE_VERIFY_FAILED` on macOS | System Python may not find root certificates. Try `SSL_CERT_FILE=/etc/ssl/cert.pem python3 migration.py ...`. Keep TLS verification enabled. |
+| Checkpoint belongs to another run | Use the matching checkpoint or provide a new path with `--checkpoint`. |
 
-## Разработка
+## Development
 
 ```bash
 python3 -m unittest discover -s tests -v
 python3 migration.py --help
 ```
 
-Справка Amplitude: [Export API](https://amplitude.com/docs/apis/analytics/export), [Batch Event Upload API](https://amplitude.com/docs/apis/analytics/batch-event-upload), [Data backfill](https://amplitude.com/docs/data/data-backfill).
+Amplitude references: [Export API](https://amplitude.com/docs/apis/analytics/export), [Batch Event Upload API](https://amplitude.com/docs/apis/analytics/batch-event-upload), [Data backfill](https://amplitude.com/docs/data/data-backfill).
